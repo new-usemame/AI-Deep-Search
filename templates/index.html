@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Agent MacBook Searcher</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Multi-Agent MacBook Searcher</h1>
+            <p>Deep search for activation-locked MacBooks using AI agents</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Configuration Panel -->
+            <section class="panel config-panel">
+                <h2>Search Configuration</h2>
+                
+                <div class="form-group">
+                    <label for="model-numbers">Model Numbers (comma-separated):</label>
+                    <input type="text" id="model-numbers" placeholder="A1706, A1707, A1932" value="">
+                </div>
+
+                <div class="form-group">
+                    <label for="exclusions">Exclusions (comma-separated):</label>
+                    <input type="text" id="exclusions" placeholder="broken screen, bad battery, cracked" value="">
+                </div>
+
+                <div class="form-group">
+                    <label for="sites">Sites to Search (comma-separated):</label>
+                    <input type="text" id="sites" placeholder="ebay.com" value="ebay.com">
+                </div>
+
+                <div class="button-group">
+                    <button id="load-defaults" class="btn btn-secondary">Load Defaults</button>
+                    <button id="start-search" class="btn btn-primary">Start Search</button>
+                    <button id="stop-search" class="btn btn-danger" disabled>Stop Search</button>
+                    <button id="pause-search" class="btn btn-warning" disabled>Pause</button>
+                    <button id="resume-search" class="btn btn-success" disabled>Resume</button>
+                </div>
+            </section>
+
+            <!-- Status Panel -->
+            <section class="panel status-panel">
+                <h2>Search Status</h2>
+                <div id="status-display">
+                    <div class="status-item">
+                        <span class="status-label">Status:</span>
+                        <span id="search-status" class="status-value">Not Running</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Active Agents:</span>
+                        <span id="active-agents" class="status-value">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Total Results:</span>
+                        <span id="total-results" class="status-value">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Pages Searched:</span>
+                        <span id="pages-searched" class="status-value">0</span>
+                    </div>
+                </div>
+
+                <div id="agent-list" class="agent-list"></div>
+            </section>
+
+            <!-- Results Panel -->
+            <section class="panel results-panel">
+                <h2>Results</h2>
+                <div class="button-group">
+                    <button id="download-csv" class="btn btn-primary">Download CSV</button>
+                    <button id="refresh-results" class="btn btn-secondary">Refresh</button>
+                </div>
+                <div id="results-display" class="results-display">
+                    <p class="empty-state">No results yet. Start a search to begin collecting listings.</p>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        // API base URL
+        const API_BASE = '/api';
+        
+        // State
+        let statusInterval = null;
+        let resultsInterval = null;
+
+        // Load default configuration
+        async function loadDefaults() {
+            try {
+                const response = await fetch(`${API_BASE}/config/default`);
+                const config = await response.json();
+                
+                document.getElementById('model-numbers').value = config.model_numbers.join(', ');
+                document.getElementById('exclusions').value = config.exclusions.join(', ');
+                document.getElementById('sites').value = config.sites.join(', ');
+            } catch (error) {
+                console.error('Error loading defaults:', error);
+            }
+        }
+
+        // Start search
+        async function startSearch() {
+            const modelNumbers = document.getElementById('model-numbers').value
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => s);
+            const exclusions = document.getElementById('exclusions').value
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => s);
+            const sites = document.getElementById('sites').value
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => s);
+
+            if (modelNumbers.length === 0) {
+                alert('Please enter at least one model number');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/search/start`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model_numbers: modelNumbers,
+                        exclusions: exclusions,
+                        sites: sites,
+                    }),
+                });
+
+                if (response.ok) {
+                    startStatusPolling();
+                    updateButtonStates(true);
+                } else {
+                    const error = await response.json();
+                    alert(`Error: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('Error starting search:', error);
+                alert('Failed to start search');
+            }
+        }
+
+        // Stop search
+        async function stopSearch() {
+            try {
+                await fetch(`${API_BASE}/search/stop`, { method: 'POST' });
+                stopStatusPolling();
+                updateButtonStates(false);
+            } catch (error) {
+                console.error('Error stopping search:', error);
+            }
+        }
+
+        // Pause search
+        async function pauseSearch() {
+            try {
+                await fetch(`${API_BASE}/search/pause`, { method: 'POST' });
+            } catch (error) {
+                console.error('Error pausing search:', error);
+            }
+        }
+
+        // Resume search
+        async function resumeSearch() {
+            try {
+                await fetch(`${API_BASE}/search/resume`, { method: 'POST' });
+            } catch (error) {
+                console.error('Error resuming search:', error);
+            }
+        }
+
+        // Update status
+        async function updateStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/search/status`);
+                const status = await response.json();
+
+                document.getElementById('search-status').textContent = 
+                    status.is_running ? 'Running' : 'Not Running';
+                document.getElementById('active-agents').textContent = 
+                    `${status.active_agents} / ${status.total_agents}`;
+                document.getElementById('total-results').textContent = 
+                    status.data_stats.total_listings || 0;
+
+                // Calculate total pages searched
+                const totalPages = status.agents.reduce((sum, agent) => 
+                    sum + (agent.pages_searched || 0), 0);
+                document.getElementById('pages-searched').textContent = totalPages;
+
+                // Update agent list
+                updateAgentList(status.agents);
+
+                // Update button states
+                updateButtonStates(status.is_running);
+            } catch (error) {
+                console.error('Error updating status:', error);
+            }
+        }
+
+        // Update agent list
+        function updateAgentList(agents) {
+            const agentList = document.getElementById('agent-list');
+            agentList.innerHTML = '';
+
+            agents.forEach(agent => {
+                const agentDiv = document.createElement('div');
+                agentDiv.className = 'agent-item';
+                agentDiv.innerHTML = `
+                    <div class="agent-header">
+                        <span class="agent-id">Agent ${agent.agent_id}</span>
+                        <span class="agent-status ${agent.is_running ? 'running' : 'stopped'}">
+                            ${agent.is_running ? (agent.is_paused ? '⏸ Paused' : '▶ Running') : '⏹ Stopped'}
+                        </span>
+                    </div>
+                    <div class="agent-stats">
+                        <span>Model: ${agent.model_number}</span>
+                        <span>Pages: ${agent.pages_searched || 0}</span>
+                        <span>Analyzed: ${agent.listings_analyzed || 0}</span>
+                        <span>Added: ${agent.listings_added || 0}</span>
+                    </div>
+                `;
+                agentList.appendChild(agentDiv);
+            });
+        }
+
+        // Update button states
+        function updateButtonStates(isRunning) {
+            document.getElementById('start-search').disabled = isRunning;
+            document.getElementById('stop-search').disabled = !isRunning;
+            document.getElementById('pause-search').disabled = !isRunning;
+            document.getElementById('resume-search').disabled = !isRunning;
+        }
+
+        // Start status polling
+        function startStatusPolling() {
+            if (statusInterval) clearInterval(statusInterval);
+            statusInterval = setInterval(updateStatus, 2000);
+            updateStatus();
+        }
+
+        // Stop status polling
+        function stopStatusPolling() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+                statusInterval = null;
+            }
+        }
+
+        // Download CSV
+        function downloadCSV() {
+            window.open(`${API_BASE}/results/download`, '_blank');
+        }
+
+        // Refresh results
+        async function refreshResults() {
+            try {
+                const response = await fetch(`${API_BASE}/results/list?limit=50`);
+                const data = await response.json();
+                displayResults(data.results);
+            } catch (error) {
+                console.error('Error refreshing results:', error);
+            }
+        }
+
+        // Display results
+        function displayResults(results) {
+            const resultsDisplay = document.getElementById('results-display');
+            
+            if (results.length === 0) {
+                resultsDisplay.innerHTML = '<p class="empty-state">No results yet.</p>';
+                return;
+            }
+
+            resultsDisplay.innerHTML = results.map(result => `
+                <div class="result-item">
+                    <h3><a href="${result.link}" target="_blank">${result.title}</a></h3>
+                    <div class="result-details">
+                        <span class="price">${result.price}</span>
+                        <span class="model">${result.model_number || 'N/A'}</span>
+                        <span class="condition">${result.condition}</span>
+                        <span class="lock-status ${result.activation_lock_mentioned === 'True' ? 'locked' : ''}">
+                            ${result.activation_lock_mentioned === 'True' ? '🔒 Locked' : '🔓 Not Locked'}
+                        </span>
+                    </div>
+                    <p class="reasoning">${result.reasoning || ''}</p>
+                </div>
+            `).join('');
+        }
+
+        // Event listeners
+        document.getElementById('load-defaults').addEventListener('click', loadDefaults);
+        document.getElementById('start-search').addEventListener('click', startSearch);
+        document.getElementById('stop-search').addEventListener('click', stopSearch);
+        document.getElementById('pause-search').addEventListener('click', pauseSearch);
+        document.getElementById('resume-search').addEventListener('click', resumeSearch);
+        document.getElementById('download-csv').addEventListener('click', downloadCSV);
+        document.getElementById('refresh-results').addEventListener('click', refreshResults);
+
+        // Initialize
+        loadDefaults();
+        updateStatus();
+        refreshResults();
+        setInterval(refreshResults, 10000); // Refresh results every 10 seconds
+    </script>
+</body>
+</html>
