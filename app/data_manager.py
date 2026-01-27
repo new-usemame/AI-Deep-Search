@@ -84,14 +84,14 @@ class DataManager:
             "reasoning": listing.get("reasoning", ""),
         }
         
-            # Write to CSV (using sync file operations for CSV compatibility)
-            file_exists = os.path.exists(self.csv_path)
-            
-            with open(self.csv_path, 'a', encoding='utf-8', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=row.keys())
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow(row)
+        # Write to CSV (using sync file operations for CSV compatibility)
+        file_exists = os.path.exists(self.csv_path)
+        
+        with open(self.csv_path, 'a', encoding='utf-8', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=row.keys())
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
         
         return True
     
