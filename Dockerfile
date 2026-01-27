@@ -42,8 +42,8 @@ RUN playwright install chromium
 # Copy application code
 COPY . .
 
-# Expose port
-EXPOSE $PORT
+# Expose port (use default 8000 if PORT not set)
+EXPOSE 8000
 
-# Start command
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "$PORT"]
+# Start command - use shell form to expand $PORT variable
+CMD python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
