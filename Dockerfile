@@ -42,12 +42,9 @@ RUN playwright install chromium
 # Copy application code
 COPY . .
 
-# Copy and set up entrypoint script
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
 # Expose port (use default 8000 if PORT not set)
 EXPOSE 8000
 
-# Use entrypoint script to handle PORT variable
-ENTRYPOINT ["/entrypoint.sh"]
+# Use CMD with sh -c to ensure PORT variable expansion
+# Using shell form ensures variables are expanded at runtime
+CMD sh -c "exec python -m uvicorn app.main:app --host 0.0.0.0 --port \${PORT:-8000}"
