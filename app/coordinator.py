@@ -1,11 +1,14 @@
 """Coordinator to manage multiple parallel search agents."""
 import asyncio
+import logging
 from typing import List, Dict, Any, Optional
 from app.agent import SearchAgent
 from app.filters import ListingFilter
 from app.data_manager import DataManager
 from app.llm_client import LLMClient
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class AgentCoordinator:
@@ -31,8 +34,12 @@ class AgentCoordinator:
     async def start_search(self):
         """Start all agents in parallel."""
         if self.is_running:
-            print("Search already running")
+            logger.warning("Search already running, ignoring start request")
             return
+        
+        logger.info(f"Starting search with {settings.agent_count} agents")
+        logger.info(f"Model numbers: {self.model_numbers}")
+        logger.info(f"Exclusions: {self.exclusions}")
         
         self.is_running = True
         self.agents = []
@@ -49,9 +56,12 @@ class AgentCoordinator:
         agent_count = settings.agent_count
         tasks = []
         
+        logger.info(f"Creating {agent_count} agents...")
         for agent_id in range(agent_count):
             # Assign model number (round-robin)
             model_number = self.model_numbers[agent_id % len(self.model_numbers)]
+            
+            logger.info(f"Creating Agent {agent_id} for model {model_number}")
             
             # Create agent
             agent = SearchAgent(
@@ -68,17 +78,22 @@ class AgentCoordinator:
             task = asyncio.create_task(agent.start())
             tasks.append(task)
         
+        logger.info(f"All {len(tasks)} agents started. Waiting for completion...")
+        
         # Wait for all agents to complete
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             # Log any exceptions
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    print(f"Agent {i} error: {result}")
+                    logger.error(f"Agent {i} error: {result}", exc_info=True)
+                else:
+                    logger.info(f"Agent {i} completed successfully")
         except Exception as e:
-            print(f"Coordinator error: {e}")
+            logger.error(f"Coordinator error: {e}", exc_info=True)
         finally:
             self.is_running = False
+            logger.info("Search completed. All agents stopped.")
             # Don't close LLM client here as it might be reused
     
     async def stop_search(self):

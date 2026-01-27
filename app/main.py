@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
 import asyncio
+import logging
+import sys
 from typing import List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
@@ -9,6 +11,21 @@ from app.coordinator import AgentCoordinator
 from app.config import settings
 from app.data_manager import DataManager
 import os
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Set specific log levels
+logging.getLogger("app.agent").setLevel(logging.INFO)
+logging.getLogger("app.browser").setLevel(logging.INFO)
+logging.getLogger("app.coordinator").setLevel(logging.INFO)
+logging.getLogger("playwright").setLevel(logging.WARNING)  # Reduce Playwright noise
 
 app = FastAPI(title="Multi-Agent MacBook Searcher")
 

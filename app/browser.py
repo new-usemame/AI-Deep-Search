@@ -1,9 +1,12 @@
 """Playwright browser wrapper for web automation."""
 import asyncio
 import random
+import logging
 from typing import Optional, Dict, Any, List
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class BrowserManager:
@@ -18,9 +21,11 @@ class BrowserManager:
     
     async def start(self):
         """Initialize browser and context."""
+        logger.debug("Starting Playwright...")
         self.playwright = await async_playwright().start()
         
         # Launch browser with stealth settings
+        logger.debug(f"Launching Chromium browser (headless={self.headless})...")
         self.browser = await self.playwright.chromium.launch(
             headless=self.headless,
             args=[
@@ -29,14 +34,17 @@ class BrowserManager:
                 "--no-sandbox",
             ]
         )
+        logger.debug("Browser launched successfully")
         
         # Create context with realistic settings
+        logger.debug("Creating browser context...")
         self.context = await self.browser.new_context(
             viewport={"width": 1920, "height": 1080},
             user_agent=self._get_random_user_agent(),
             locale="en-US",
             timezone_id="America/New_York",
         )
+        logger.debug("Browser context created")
         
         # Add stealth scripts
         await self.context.add_init_script("""
@@ -61,6 +69,7 @@ class BrowserManager:
         await self.page.set_extra_http_headers({
             "Accept-Language": "en-US,en;q=0.9",
         })
+        logger.debug("Browser page created and configured")
     
     async def close(self):
         """Close browser and cleanup."""
@@ -76,45 +85,67 @@ class BrowserManager:
     async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> bool:
         """Navigate to a URL."""
         try:
+            logger.debug(f"Navigating to: {url}")
             await self.page.goto(
                 url,
                 wait_until=wait_until,
                 timeout=settings.page_load_timeout
             )
+            logger.debug(f"Successfully navigated to: {url}")
             await self._random_delay(0.5, 1.5)
             return True
         except Exception as e:
-            print(f"Navigation error: {e}")
+            logger.error(f"Navigation error to {url}: {e}", exc_info=True)
             return False
     
     async def search_ebay(self, query: str) -> bool:
         """Navigate to eBay search page."""
         # Construct eBay search URL
         search_url = f"https://www.ebay.com/sch/i.html?_nkw={query.replace(' ', '+')}"
-        return await self.navigate(search_url)
+        logger.info(f"Searching eBay for: {query} (URL: {search_url})")
+        result = await self.navigate(search_url)
+        if result:
+            logger.info(f"Successfully navigated to eBay search page")
+        else:
+            logger.error(f"Failed to navigate to eBay search page")
+        return result
     
     async def get_listings_from_page(self) -> List[Dict[str, Any]]:
         """Extract listing data from current eBay search results page."""
         listings = []
         
         try:
+            logger.debug("Waiting for listings to load...")
             # Wait for listings to load
             await self.page.wait_for_selector("ul.srp-results > li", timeout=10000)
+            logger.debug("Listings container found")
             
             # Get all listing items
             listing_elements = await self.page.query_selector_all("ul.srp-results > li.s-item")
+            logger.info(f"Found {len(listing_elements)} listing elements on page")
             
-            for element in listing_elements:
+            for i, element in enumerate(listing_elements):
                 try:
                     listing = await self._extract_listing_data(element)
                     if listing:
                         listings.append(listing)
+                        logger.debug(f"Extracted listing {i+1}/{len(listing_elements)}: {listing.get('title', '')[:50]}")
+                    else:
+                        logger.debug(f"Failed to extract data from listing element {i+1}")
                 except Exception as e:
-                    print(f"Error extracting listing: {e}")
+                    logger.warning(f"Error extracting listing {i+1}: {e}")
                     continue
             
+            logger.info(f"Successfully extracted {len(listings)} listings from page")
+            
         except Exception as e:
-            print(f"Error getting listings: {e}")
+            logger.error(f"Error getting listings from page: {e}", exc_info=True)
+            # Try to get page URL for debugging
+            try:
+                current_url = self.page.url
+                logger.error(f"Current page URL: {current_url}")
+            except:
+                pass
         
         return listings
     
@@ -124,10 +155,15 @@ class BrowserManager:
             # Title and link
             title_elem = await element.query_selector("h3.s-item__title")
             if not title_elem:
+                logger.debug("No title element found in listing")
                 return None
             
             title = await title_elem.inner_text()
             title = title.strip()
+            
+            if not title:
+                logger.debug("Title is empty")
+                return None
             
             link_elem = await element.query_selector("a.s-item__link")
             link = await link_elem.get_attribute("href") if link_elem else None
@@ -228,6 +264,7 @@ class BrowserManager:
     async def check_captcha(self) -> bool:
         """Check if page shows a CAPTCHA."""
         try:
+            logger.debug("Checking for CAPTCHA...")
             captcha_indicators = [
                 "iframe[src*='captcha']",
                 ".g-recaptcha",
@@ -238,6 +275,7 @@ class BrowserManager:
             for indicator in captcha_indicators:
                 elem = await self.page.query_selector(indicator)
                 if elem:
+                    logger.warning(f"CAPTCHA detected via indicator: {indicator}")
                     return True
             
             # Check page text
@@ -245,10 +283,13 @@ class BrowserManager:
             if body_text:
                 text = await body_text.inner_text()
                 if "captcha" in text.lower() or "verify" in text.lower():
+                    logger.warning("CAPTCHA detected in page text")
                     return True
             
+            logger.debug("No CAPTCHA detected")
             return False
-        except:
+        except Exception as e:
+            logger.warning(f"Error checking for CAPTCHA: {e}")
             return False
     
     async def _random_delay(self, min_seconds: float, max_seconds: float):
