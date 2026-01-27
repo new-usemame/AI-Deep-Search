@@ -21,55 +21,69 @@ class BrowserManager:
     
     async def start(self):
         """Initialize browser and context."""
-        logger.debug("Starting Playwright...")
-        self.playwright = await async_playwright().start()
-        
-        # Launch browser with stealth settings
-        logger.debug(f"Launching Chromium browser (headless={self.headless})...")
-        self.browser = await self.playwright.chromium.launch(
-            headless=self.headless,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-            ]
-        )
-        logger.debug("Browser launched successfully")
-        
-        # Create context with realistic settings
-        logger.debug("Creating browser context...")
-        self.context = await self.browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=self._get_random_user_agent(),
-            locale="en-US",
-            timezone_id="America/New_York",
-        )
-        logger.debug("Browser context created")
-        
-        # Add stealth scripts
-        await self.context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
+        try:
+            logger.info("Starting Playwright...")
+            self.playwright = await async_playwright().start()
+            logger.info("Playwright started successfully")
             
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5]
-            });
+            # Launch browser with stealth settings
+            logger.info(f"Launching Chromium browser (headless={self.headless})...")
+            try:
+                self.browser = await self.playwright.chromium.launch(
+                    headless=self.headless,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-dev-shm-usage",
+                        "--no-sandbox",
+                    ]
+                )
+                logger.info("Browser launched successfully")
+            except Exception as launch_error:
+                logger.error(f"Failed to launch browser: {launch_error}", exc_info=True)
+                raise
             
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en']
-            });
+            # Create context with realistic settings
+            logger.info("Creating browser context...")
+            try:
+                self.context = await self.browser.new_context(
+                    viewport={"width": 1920, "height": 1080},
+                    user_agent=self._get_random_user_agent(),
+                    locale="en-US",
+                    timezone_id="America/New_York",
+                )
+                logger.info("Browser context created")
+            except Exception as context_error:
+                logger.error(f"Failed to create browser context: {context_error}", exc_info=True)
+                raise
             
-            window.chrome = {
-                runtime: {}
-            };
-        """)
-        
-        self.page = await self.context.new_page()
-        await self.page.set_extra_http_headers({
-            "Accept-Language": "en-US,en;q=0.9",
-        })
-        logger.debug("Browser page created and configured")
+            # Add stealth scripts
+            await self.context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+                
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+                
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en']
+                });
+                
+                window.chrome = {
+                    runtime: {}
+                };
+            """)
+            
+            logger.info("Creating browser page...")
+            self.page = await self.context.new_page()
+            await self.page.set_extra_http_headers({
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+            logger.info("Browser page created and configured successfully")
+        except Exception as e:
+            logger.error(f"Error in browser.start(): {e}", exc_info=True)
+            raise
     
     async def close(self):
         """Close browser and cleanup."""

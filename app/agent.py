@@ -44,20 +44,32 @@ class SearchAgent:
     
     async def start(self):
         """Start the agent's search process."""
+        logger.info(f"Agent {self.agent_id}: Starting agent process...")
         self.is_running = True
         self.is_paused = False
         
         try:
             logger.info(f"Agent {self.agent_id}: Initializing browser...")
-            await self.browser.start()
-            logger.info(f"Agent {self.agent_id}: Browser started successfully")
+            try:
+                await self.browser.start()
+                logger.info(f"Agent {self.agent_id}: Browser started successfully")
+            except Exception as browser_error:
+                logger.error(f"Agent {self.agent_id}: Browser initialization failed: {browser_error}", exc_info=True)
+                self.stats["errors"] += 1
+                return
+            
+            logger.info(f"Agent {self.agent_id}: Starting search process...")
             await self._search_ebay()
+            logger.info(f"Agent {self.agent_id}: Search process completed")
         except Exception as e:
-            logger.error(f"Agent {self.agent_id} error: {e}", exc_info=True)
+            logger.error(f"Agent {self.agent_id} error in start(): {e}", exc_info=True)
             self.stats["errors"] += 1
         finally:
             logger.info(f"Agent {self.agent_id}: Closing browser...")
-            await self.browser.close()
+            try:
+                await self.browser.close()
+            except Exception as close_error:
+                logger.warning(f"Agent {self.agent_id}: Error closing browser: {close_error}")
             self.is_running = False
             logger.info(f"Agent {self.agent_id}: Stopped. Final stats: {self.stats}")
     

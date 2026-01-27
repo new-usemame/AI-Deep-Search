@@ -80,9 +80,17 @@ class AgentCoordinator:
         
         logger.info(f"All {len(tasks)} agents started. Waiting for completion...")
         
-        # Wait for all agents to complete
+        # Wait for all agents to complete with timeout monitoring
         try:
+            # Use asyncio.wait to monitor progress
+            done, pending = await asyncio.wait(tasks, timeout=5.0, return_when=asyncio.FIRST_COMPLETED)
+            
+            # Log initial status
+            logger.info(f"After 5 seconds: {len(done)} agents completed, {len(pending)} still running")
+            
+            # Now wait for all to complete
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            
             # Log any exceptions
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
