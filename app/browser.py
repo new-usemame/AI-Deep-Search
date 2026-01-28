@@ -138,8 +138,27 @@ class BrowserManager:
         try:
             logger.info("Waiting for listings to load...")
             
-            # Wait a bit for page to fully render
-            await asyncio.sleep(2)
+            # Wait for page to be fully loaded and JavaScript to execute
+            try:
+                # Wait for network to be idle (all requests finished)
+                await self.page.wait_for_load_state("networkidle", timeout=15000)
+                logger.info("Network idle - page should be fully loaded")
+            except Exception as e:
+                logger.warning(f"Network idle timeout: {e}, continuing anyway")
+            
+            # Additional wait for dynamic content
+            await asyncio.sleep(3)
+            
+            # Try waiting for common eBay search result containers
+            try:
+                # Wait for any of these common containers
+                await asyncio.wait_for(
+                    self.page.wait_for_selector("ul.srp-results, .srp-results, [data-viewport]", timeout=5000),
+                    timeout=5.0
+                )
+                logger.info("Search results container found")
+            except:
+                logger.warning("Search results container not found, trying selectors anyway")
             
             # Try multiple selectors for eBay listings (eBay has changed their structure over time)
             selectors_to_try = [
@@ -175,29 +194,64 @@ class BrowserManager:
                 logger.warning("No listing elements found with any selector. Checking page content...")
                 try:
                     # Get page title and URL for debugging
-                    page_title = await self.page.title()
+                    page_title = await asyncio.wait_for(self.page.title(), timeout=5.0)
                     page_url = self.page.url
                     logger.warning(f"Page title: {page_title}")
                     logger.warning(f"Page URL: {page_url}")
                     
                     # Check if page has any content
-                    body_text = await self.page.query_selector("body")
-                    if body_text:
-                        text_content = await body_text.inner_text()
-                        logger.warning(f"Page contains text (first 500 chars): {text_content[:500]}")
+                    try:
+                        body_text = await asyncio.wait_for(
+                            self.page.query_selector("body"),
+                            timeout=5.0
+                        )
+                        if body_text:
+                            text_content = await asyncio.wait_for(
+                                body_text.inner_text(),
+                                timeout=5.0
+                            )
+                            logger.warning(f"Page contains text (first 1000 chars): {text_content[:1000]}")
+                            
+                            # Check for common eBay error/block messages
+                            text_lower = text_content.lower()
+                            if "captcha" in text_lower or "verify" in text_lower:
+                                logger.error("CAPTCHA or verification detected on page!")
+                            if "access denied" in text_lower or "blocked" in text_lower:
+                                logger.error("Access denied or blocked message detected!")
+                            if "sorry, we couldn't find" in text_lower or "no results" in text_lower:
+                                logger.warning("No search results found on page")
+                    except asyncio.TimeoutError:
+                        logger.error("Timeout getting page body text")
+                    except Exception as e:
+                        logger.error(f"Error getting page body: {e}")
                     
                     # Try to find any list items at all
-                    all_li = await self.page.query_selector_all("li")
-                    logger.warning(f"Found {len(all_li)} total <li> elements on page")
+                    try:
+                        all_li = await asyncio.wait_for(
+                            self.page.query_selector_all("li"),
+                            timeout=5.0
+                        )
+                        logger.warning(f"Found {len(all_li)} total <li> elements on page")
+                    except asyncio.TimeoutError:
+                        logger.error("Timeout getting list elements")
+                    except Exception as e:
+                        logger.error(f"Error getting list elements: {e}")
                     
-                    # Check for common eBay error/block messages
-                    if "captcha" in text_content.lower() or "verify" in text_content.lower():
-                        logger.error("CAPTCHA or verification detected on page!")
-                    if "access denied" in text_content.lower() or "blocked" in text_content.lower():
-                        logger.error("Access denied or blocked message detected!")
+                    # Try to get page HTML structure
+                    try:
+                        html_content = await asyncio.wait_for(
+                            self.page.content(),
+                            timeout=5.0
+                        )
+                        # Log a snippet of HTML to see structure
+                        logger.warning(f"Page HTML snippet (first 2000 chars): {html_content[:2000]}")
+                    except asyncio.TimeoutError:
+                        logger.error("Timeout getting page HTML")
+                    except Exception as e:
+                        logger.error(f"Error getting page HTML: {e}")
                         
                 except Exception as debug_error:
-                    logger.error(f"Error during debugging: {debug_error}")
+                    logger.error(f"Error during debugging: {debug_error}", exc_info=True)
             
             logger.info(f"Found {len(listing_elements)} listing elements on page")
             
