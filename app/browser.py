@@ -199,11 +199,17 @@ class BrowserManager:
             if not listing_elements:
                 logger.warning("No listing elements found with any selector. Checking page content...")
                 try:
-                    # Get page title and URL for debugging
-                    page_title = await asyncio.wait_for(self.page.title(), timeout=5.0)
+                    # Get page URL first (this should always work)
                     page_url = self.page.url
-                    logger.warning(f"Page title: {page_title}")
                     logger.warning(f"Page URL: {page_url}")
+                    
+                    # Get page title
+                    try:
+                        page_title = await asyncio.wait_for(self.page.title(), timeout=5.0)
+                        logger.warning(f"Page title: {page_title}")
+                    except Exception as title_error:
+                        logger.error(f"Could not get page title: {title_error}")
+                        page_title = "Unknown"
                     
                     # Check if page has any content
                     try:
@@ -243,7 +249,32 @@ class BrowserManager:
                     except Exception as e:
                         logger.error(f"Error getting list elements: {e}")
                     
-                    # Try to get page HTML structure
+                    # Try to get page info using JavaScript (more reliable)
+                    try:
+                        page_info = await asyncio.wait_for(
+                            self.page.evaluate("""() => {
+                                return {
+                                    title: document.title,
+                                    url: window.location.href,
+                                    bodyText: document.body ? document.body.innerText.substring(0, 1000) : 'No body',
+                                    hasResults: document.querySelector('ul.srp-results') !== null,
+                                    hasAnyListItems: document.querySelectorAll('li').length,
+                                    htmlSnippet: document.documentElement.outerHTML.substring(0, 2000)
+                                };
+                            }"""),
+                            timeout=5.0
+                        )
+                        logger.warning(f"Page info (JS): title='{page_info.get('title', 'N/A')}', url='{page_info.get('url', 'N/A')}'")
+                        logger.warning(f"Has results container: {page_info.get('hasResults', False)}")
+                        logger.warning(f"Total <li> elements: {page_info.get('hasAnyListItems', 0)}")
+                        logger.warning(f"Body text (first 1000 chars): {page_info.get('bodyText', 'N/A')[:1000]}")
+                        logger.warning(f"HTML snippet (first 2000 chars): {page_info.get('htmlSnippet', 'N/A')[:2000]}")
+                    except asyncio.TimeoutError:
+                        logger.error("Timeout getting page info via JavaScript")
+                    except Exception as js_error:
+                        logger.error(f"Error getting page info via JavaScript: {js_error}")
+                    
+                    # Try to get page HTML structure (fallback)
                     try:
                         html_content = await asyncio.wait_for(
                             self.page.content(),
@@ -258,6 +289,11 @@ class BrowserManager:
                         
                 except Exception as debug_error:
                     logger.error(f"Error during debugging: {debug_error}", exc_info=True)
+                    # Try to at least get the URL even if other debugging fails
+                    try:
+                        logger.error(f"Current page URL (from exception handler): {self.page.url}")
+                    except:
+                        logger.error("Could not even get page URL")
             
             logger.info(f"Found {len(listing_elements)} listing elements on page")
             
