@@ -199,30 +199,47 @@ class BrowserManager:
             if not listing_elements:
                 logger.warning("No listing elements found with any selector. Checking page content...")
                 
+                # First, verify we're on an eBay search results page
+                current_url = self.page.url
+                logger.warning(f"Current page URL: {current_url}")
+                if "ebay.com" not in current_url.lower():
+                    logger.error(f"Not on eBay! Redirected to: {current_url}")
+                elif "/sch/" not in current_url and "/s/" not in current_url:
+                    logger.warning(f"URL doesn't look like a search results page: {current_url}")
+                
                 # First, try JavaScript-based approach (most reliable)
                 try:
+                    logger.warning("Attempting JavaScript-based page info extraction...")
                     page_info = await asyncio.wait_for(
                         self.page.evaluate("""() => {
-                            return {
-                                title: document.title,
-                                url: window.location.href,
-                                bodyText: document.body ? document.body.innerText.substring(0, 1000) : 'No body',
-                                hasResults: document.querySelector('ul.srp-results') !== null,
-                                hasAnyListItems: document.querySelectorAll('li').length,
-                                htmlSnippet: document.documentElement.outerHTML.substring(0, 2000)
-                            };
+                            try {
+                                return {
+                                    title: document.title || 'No title',
+                                    url: window.location.href || 'No URL',
+                                    bodyText: document.body ? document.body.innerText.substring(0, 1000) : 'No body',
+                                    hasResults: document.querySelector('ul.srp-results') !== null,
+                                    hasAnyListItems: document.querySelectorAll('li').length,
+                                    htmlSnippet: document.documentElement ? document.documentElement.outerHTML.substring(0, 2000) : 'No HTML'
+                                };
+                            } catch (e) {
+                                return { error: String(e) };
+                            }
                         }"""),
-                        timeout=5.0
+                        timeout=10.0
                     )
-                    logger.warning(f"Page info (JS): title='{page_info.get('title', 'N/A')}', url='{page_info.get('url', 'N/A')}'")
-                    logger.warning(f"Has results container: {page_info.get('hasResults', False)}")
-                    logger.warning(f"Total <li> elements: {page_info.get('hasAnyListItems', 0)}")
-                    logger.warning(f"Body text (first 1000 chars): {page_info.get('bodyText', 'N/A')[:1000]}")
-                    logger.warning(f"HTML snippet (first 2000 chars): {page_info.get('htmlSnippet', 'N/A')[:2000]}")
+                    
+                    if isinstance(page_info, dict) and 'error' in page_info:
+                        logger.error(f"JavaScript evaluation error: {page_info['error']}")
+                    else:
+                        logger.warning(f"Page info (JS): title='{page_info.get('title', 'N/A')}', url='{page_info.get('url', 'N/A')}'")
+                        logger.warning(f"Has results container: {page_info.get('hasResults', False)}")
+                        logger.warning(f"Total <li> elements: {page_info.get('hasAnyListItems', 0)}")
+                        logger.warning(f"Body text (first 1000 chars): {page_info.get('bodyText', 'N/A')[:1000]}")
+                        logger.warning(f"HTML snippet (first 2000 chars): {page_info.get('htmlSnippet', 'N/A')[:2000]}")
                 except asyncio.TimeoutError:
-                    logger.error("Timeout getting page info via JavaScript")
+                    logger.error("Timeout getting page info via JavaScript (10s timeout)")
                 except Exception as js_error:
-                    logger.error(f"Error getting page info via JavaScript: {js_error}", exc_info=True)
+                    logger.error(f"Error getting page info via JavaScript: {type(js_error).__name__}: {str(js_error)}", exc_info=True)
                 
                 # Fallback: Try Playwright methods
                 try:
