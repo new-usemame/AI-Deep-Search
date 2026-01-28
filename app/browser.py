@@ -99,14 +99,21 @@ class BrowserManager:
     async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> bool:
         """Navigate to a URL."""
         try:
-            logger.debug(f"Navigating to: {url}")
+            logger.info(f"Navigating to: {url}")
             await self.page.goto(
                 url,
                 wait_until=wait_until,
                 timeout=settings.page_load_timeout
             )
-            logger.debug(f"Successfully navigated to: {url}")
-            await self._random_delay(0.5, 1.5)
+            logger.info(f"Page loaded, waiting for network idle...")
+            # Wait for network to be idle to ensure page is fully loaded
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=10000)
+            except:
+                logger.debug("Network idle timeout, continuing anyway")
+            
+            logger.info(f"Successfully navigated to: {url}")
+            await self._random_delay(1, 2)  # Increased delay for page to render
             return True
         except Exception as e:
             logger.error(f"Navigation error to {url}: {e}", exc_info=True)
@@ -129,13 +136,69 @@ class BrowserManager:
         listings = []
         
         try:
-            logger.debug("Waiting for listings to load...")
-            # Wait for listings to load
-            await self.page.wait_for_selector("ul.srp-results > li", timeout=10000)
-            logger.debug("Listings container found")
+            logger.info("Waiting for listings to load...")
             
-            # Get all listing items
-            listing_elements = await self.page.query_selector_all("ul.srp-results > li.s-item")
+            # Wait a bit for page to fully render
+            await asyncio.sleep(2)
+            
+            # Try multiple selectors for eBay listings (eBay has changed their structure over time)
+            selectors_to_try = [
+                "ul.srp-results > li.s-item",
+                "ul.srp-results li.s-item",
+                "li.s-item",
+                "[data-view] li[data-viewport]",
+                ".srp-results .s-item",
+            ]
+            
+            listing_elements = []
+            for selector in selectors_to_try:
+                try:
+                    logger.info(f"Trying selector: {selector}")
+                    # Wait for selector with shorter timeout
+                    try:
+                        await self.page.wait_for_selector(selector, timeout=5000)
+                    except:
+                        logger.debug(f"Selector {selector} not found, trying next...")
+                        continue
+                    
+                    elements = await self.page.query_selector_all(selector)
+                    if elements:
+                        logger.info(f"Found {len(elements)} elements with selector: {selector}")
+                        listing_elements = elements
+                        break
+                except Exception as e:
+                    logger.debug(f"Error with selector {selector}: {e}")
+                    continue
+            
+            # If no elements found, try to get page content for debugging
+            if not listing_elements:
+                logger.warning("No listing elements found with any selector. Checking page content...")
+                try:
+                    # Get page title and URL for debugging
+                    page_title = await self.page.title()
+                    page_url = self.page.url
+                    logger.warning(f"Page title: {page_title}")
+                    logger.warning(f"Page URL: {page_url}")
+                    
+                    # Check if page has any content
+                    body_text = await self.page.query_selector("body")
+                    if body_text:
+                        text_content = await body_text.inner_text()
+                        logger.warning(f"Page contains text (first 500 chars): {text_content[:500]}")
+                    
+                    # Try to find any list items at all
+                    all_li = await self.page.query_selector_all("li")
+                    logger.warning(f"Found {len(all_li)} total <li> elements on page")
+                    
+                    # Check for common eBay error/block messages
+                    if "captcha" in text_content.lower() or "verify" in text_content.lower():
+                        logger.error("CAPTCHA or verification detected on page!")
+                    if "access denied" in text_content.lower() or "blocked" in text_content.lower():
+                        logger.error("Access denied or blocked message detected!")
+                        
+                except Exception as debug_error:
+                    logger.error(f"Error during debugging: {debug_error}")
+            
             logger.info(f"Found {len(listing_elements)} listing elements on page")
             
             for i, element in enumerate(listing_elements):
@@ -166,49 +229,119 @@ class BrowserManager:
     async def _extract_listing_data(self, element) -> Optional[Dict[str, Any]]:
         """Extract data from a single listing element."""
         try:
-            # Title and link
-            title_elem = await element.query_selector("h3.s-item__title")
-            if not title_elem:
-                logger.debug("No title element found in listing")
-                return None
+            # Try multiple selectors for title (eBay has changed structure)
+            title_selectors = [
+                "h3.s-item__title",
+                ".s-item__title",
+                "h3[class*='title']",
+                "a[class*='title']",
+                "h3",
+            ]
             
-            title = await title_elem.inner_text()
-            title = title.strip()
+            title_elem = None
+            title = ""
+            for selector in title_selectors:
+                try:
+                    title_elem = await element.query_selector(selector)
+                    if title_elem:
+                        title = await title_elem.inner_text()
+                        title = title.strip()
+                        if title:
+                            break
+                except:
+                    continue
             
             if not title:
-                logger.debug("Title is empty")
+                logger.debug("No title found in listing element")
                 return None
             
-            link_elem = await element.query_selector("a.s-item__link")
-            link = await link_elem.get_attribute("href") if link_elem else None
+            # Try multiple selectors for link
+            link_selectors = [
+                "a.s-item__link",
+                "a[class*='link']",
+                "a[href*='ebay.com/itm']",
+                "a",
+            ]
             
-            # Price
-            price_elem = await element.query_selector("span.s-item__price")
-            price = await price_elem.inner_text() if price_elem else "N/A"
+            link = None
+            for selector in link_selectors:
+                try:
+                    link_elem = await element.query_selector(selector)
+                    if link_elem:
+                        link = await link_elem.get_attribute("href")
+                        if link and "ebay.com" in link:
+                            break
+                except:
+                    continue
             
-            # Condition
-            condition_elem = await element.query_selector("span.s-item__condition")
-            condition = await condition_elem.inner_text() if condition_elem else "N/A"
+            # Try multiple selectors for price
+            price_selectors = [
+                "span.s-item__price",
+                ".s-item__price",
+                "[class*='price']",
+            ]
             
-            # Shipping
-            shipping_elem = await element.query_selector("span.s-item__shipping")
-            shipping = await shipping_elem.inner_text() if shipping_elem else ""
+            price = "N/A"
+            for selector in price_selectors:
+                try:
+                    price_elem = await element.query_selector(selector)
+                    if price_elem:
+                        price_text = await price_elem.inner_text()
+                        if price_text.strip():
+                            price = price_text.strip()
+                            break
+                except:
+                    continue
             
-            # Seller
-            seller_elem = await element.query_selector("span.s-item__seller-info-text")
-            seller = await seller_elem.inner_text() if seller_elem else "N/A"
+            # Try multiple selectors for condition
+            condition_selectors = [
+                "span.s-item__condition",
+                ".s-item__condition",
+                "[class*='condition']",
+            ]
+            
+            condition = "N/A"
+            for selector in condition_selectors:
+                try:
+                    condition_elem = await element.query_selector(selector)
+                    if condition_elem:
+                        condition_text = await condition_elem.inner_text()
+                        if condition_text.strip():
+                            condition = condition_text.strip()
+                            break
+                except:
+                    continue
+            
+            # Try multiple selectors for seller
+            seller_selectors = [
+                "span.s-item__seller-info-text",
+                ".s-item__seller-info-text",
+                "[class*='seller']",
+            ]
+            
+            seller = "N/A"
+            for selector in seller_selectors:
+                try:
+                    seller_elem = await element.query_selector(selector)
+                    if seller_elem:
+                        seller_text = await seller_elem.inner_text()
+                        if seller_text.strip():
+                            seller = seller_text.strip()
+                            break
+                except:
+                    continue
             
             return {
                 "title": title,
                 "link": link,
                 "price": price,
                 "condition": condition,
-                "shipping": shipping,
+                "shipping": "",
                 "seller": seller,
                 "description": "",  # Will be filled when viewing details
             }
         except Exception as e:
-            print(f"Error extracting listing data: {e}")
+            logger.warning(f"Error extracting listing data: {e}", exc_info=True)
             return None
     
     async def get_listing_details(self, url: str) -> Dict[str, Any]:
