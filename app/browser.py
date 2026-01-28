@@ -198,10 +198,37 @@ class BrowserManager:
             # If no elements found, try to get page content for debugging
             if not listing_elements:
                 logger.warning("No listing elements found with any selector. Checking page content...")
+                
+                # First, try JavaScript-based approach (most reliable)
+                try:
+                    page_info = await asyncio.wait_for(
+                        self.page.evaluate("""() => {
+                            return {
+                                title: document.title,
+                                url: window.location.href,
+                                bodyText: document.body ? document.body.innerText.substring(0, 1000) : 'No body',
+                                hasResults: document.querySelector('ul.srp-results') !== null,
+                                hasAnyListItems: document.querySelectorAll('li').length,
+                                htmlSnippet: document.documentElement.outerHTML.substring(0, 2000)
+                            };
+                        }"""),
+                        timeout=5.0
+                    )
+                    logger.warning(f"Page info (JS): title='{page_info.get('title', 'N/A')}', url='{page_info.get('url', 'N/A')}'")
+                    logger.warning(f"Has results container: {page_info.get('hasResults', False)}")
+                    logger.warning(f"Total <li> elements: {page_info.get('hasAnyListItems', 0)}")
+                    logger.warning(f"Body text (first 1000 chars): {page_info.get('bodyText', 'N/A')[:1000]}")
+                    logger.warning(f"HTML snippet (first 2000 chars): {page_info.get('htmlSnippet', 'N/A')[:2000]}")
+                except asyncio.TimeoutError:
+                    logger.error("Timeout getting page info via JavaScript")
+                except Exception as js_error:
+                    logger.error(f"Error getting page info via JavaScript: {js_error}", exc_info=True)
+                
+                # Fallback: Try Playwright methods
                 try:
                     # Get page URL first (this should always work)
                     page_url = self.page.url
-                    logger.warning(f"Page URL: {page_url}")
+                    logger.warning(f"Page URL (Playwright): {page_url}")
                     
                     # Get page title
                     try:
@@ -248,31 +275,6 @@ class BrowserManager:
                         logger.error("Timeout getting list elements")
                     except Exception as e:
                         logger.error(f"Error getting list elements: {e}")
-                    
-                    # Try to get page info using JavaScript (more reliable)
-                    try:
-                        page_info = await asyncio.wait_for(
-                            self.page.evaluate("""() => {
-                                return {
-                                    title: document.title,
-                                    url: window.location.href,
-                                    bodyText: document.body ? document.body.innerText.substring(0, 1000) : 'No body',
-                                    hasResults: document.querySelector('ul.srp-results') !== null,
-                                    hasAnyListItems: document.querySelectorAll('li').length,
-                                    htmlSnippet: document.documentElement.outerHTML.substring(0, 2000)
-                                };
-                            }"""),
-                            timeout=5.0
-                        )
-                        logger.warning(f"Page info (JS): title='{page_info.get('title', 'N/A')}', url='{page_info.get('url', 'N/A')}'")
-                        logger.warning(f"Has results container: {page_info.get('hasResults', False)}")
-                        logger.warning(f"Total <li> elements: {page_info.get('hasAnyListItems', 0)}")
-                        logger.warning(f"Body text (first 1000 chars): {page_info.get('bodyText', 'N/A')[:1000]}")
-                        logger.warning(f"HTML snippet (first 2000 chars): {page_info.get('htmlSnippet', 'N/A')[:2000]}")
-                    except asyncio.TimeoutError:
-                        logger.error("Timeout getting page info via JavaScript")
-                    except Exception as js_error:
-                        logger.error(f"Error getting page info via JavaScript: {js_error}")
                     
                     # Try to get page HTML structure (fallback)
                     try:
