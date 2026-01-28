@@ -411,7 +411,7 @@ class BrowserManager:
     async def check_captcha(self) -> bool:
         """Check if page shows a CAPTCHA."""
         try:
-            logger.debug("Checking for CAPTCHA...")
+            logger.info("Checking for CAPTCHA indicators...")
             captcha_indicators = [
                 "iframe[src*='captcha']",
                 ".g-recaptcha",
@@ -420,23 +420,45 @@ class BrowserManager:
             ]
             
             for indicator in captcha_indicators:
-                elem = await self.page.query_selector(indicator)
-                if elem:
-                    logger.warning(f"CAPTCHA detected via indicator: {indicator}")
-                    return True
+                try:
+                    # Add timeout to prevent hanging
+                    elem = await asyncio.wait_for(
+                        self.page.query_selector(indicator),
+                        timeout=2.0
+                    )
+                    if elem:
+                        logger.warning(f"CAPTCHA detected via indicator: {indicator}")
+                        return True
+                except asyncio.TimeoutError:
+                    logger.debug(f"Timeout checking CAPTCHA indicator: {indicator}")
+                    continue
+                except Exception as e:
+                    logger.debug(f"Error checking indicator {indicator}: {e}")
+                    continue
             
-            # Check page text
-            body_text = await self.page.query_selector("body")
-            if body_text:
-                text = await body_text.inner_text()
-                if "captcha" in text.lower() or "verify" in text.lower():
-                    logger.warning("CAPTCHA detected in page text")
-                    return True
+            # Check page text with timeout
+            try:
+                body_text = await asyncio.wait_for(
+                    self.page.query_selector("body"),
+                    timeout=2.0
+                )
+                if body_text:
+                    text = await asyncio.wait_for(
+                        body_text.inner_text(),
+                        timeout=2.0
+                    )
+                    if "captcha" in text.lower() or "verify" in text.lower():
+                        logger.warning("CAPTCHA detected in page text")
+                        return True
+            except asyncio.TimeoutError:
+                logger.debug("Timeout checking page text for CAPTCHA")
+            except Exception as e:
+                logger.debug(f"Error checking page text: {e}")
             
-            logger.debug("No CAPTCHA detected")
+            logger.info("No CAPTCHA detected")
             return False
         except Exception as e:
-            logger.warning(f"Error checking for CAPTCHA: {e}")
+            logger.error(f"Error checking for CAPTCHA: {e}", exc_info=True)
             return False
     
     async def _random_delay(self, min_seconds: float, max_seconds: float):
