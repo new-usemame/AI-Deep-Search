@@ -105,15 +105,22 @@ class BrowserManager:
                 wait_until=wait_until,
                 timeout=settings.page_load_timeout
             )
-            logger.info(f"Page loaded, waiting for network idle...")
-            # Wait for network to be idle to ensure page is fully loaded
+            logger.info(f"Page loaded (wait_until={wait_until})")
+            
+            # Try to wait for network idle, but don't block if it takes too long
             try:
-                await self.page.wait_for_load_state("networkidle", timeout=10000)
-            except:
-                logger.debug("Network idle timeout, continuing anyway")
+                await asyncio.wait_for(
+                    self.page.wait_for_load_state("networkidle"),
+                    timeout=5.0
+                )
+                logger.info("Network idle - page fully loaded")
+            except asyncio.TimeoutError:
+                logger.info("Network idle timeout (5s), continuing - page may still be loading")
+            except Exception as e:
+                logger.debug(f"Network idle wait error: {e}, continuing")
             
             logger.info(f"Successfully navigated to: {url}")
-            await self._random_delay(1, 2)  # Increased delay for page to render
+            await self._random_delay(1, 2)
             return True
         except Exception as e:
             logger.error(f"Navigation error to {url}: {e}", exc_info=True)
@@ -138,27 +145,26 @@ class BrowserManager:
         try:
             logger.info("Waiting for listings to load...")
             
-            # Wait for page to be fully loaded and JavaScript to execute
-            try:
-                # Wait for network to be idle (all requests finished)
-                await self.page.wait_for_load_state("networkidle", timeout=15000)
-                logger.info("Network idle - page should be fully loaded")
-            except Exception as e:
-                logger.warning(f"Network idle timeout: {e}, continuing anyway")
+            # Wait a bit for dynamic content to render (navigation already waited for network idle)
+            await asyncio.sleep(2)
             
-            # Additional wait for dynamic content
-            await asyncio.sleep(3)
+            # Try waiting for common eBay search result containers with timeout
+            container_found = False
+            container_selectors = ["ul.srp-results", ".srp-results", "[data-viewport]", "ul[class*='srp']"]
+            for selector in container_selectors:
+                try:
+                    await asyncio.wait_for(
+                        self.page.wait_for_selector(selector, timeout=3000),
+                        timeout=3.0
+                    )
+                    logger.info(f"Search results container found: {selector}")
+                    container_found = True
+                    break
+                except:
+                    continue
             
-            # Try waiting for common eBay search result containers
-            try:
-                # Wait for any of these common containers
-                await asyncio.wait_for(
-                    self.page.wait_for_selector("ul.srp-results, .srp-results, [data-viewport]", timeout=5000),
-                    timeout=5.0
-                )
-                logger.info("Search results container found")
-            except:
-                logger.warning("Search results container not found, trying selectors anyway")
+            if not container_found:
+                logger.warning("Search results container not found with any selector, trying to extract anyway")
             
             # Try multiple selectors for eBay listings (eBay has changed their structure over time)
             selectors_to_try = [
